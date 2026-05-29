@@ -26,6 +26,28 @@
   .hdr h1 { font-family:'Noto Serif TC',serif; font-size:22px; font-weight:600; margin:0; letter-spacing:.5px; }
   .hdr .date { font-size:13px; color:var(--ink-soft); margin-top:2px; }
   .gear { background:none; border:none; font-size:21px; cursor:pointer; color:var(--ink-soft); padding:4px; }
+  .hdr-btns { display:flex; gap:4px; align-items:center; }
+  .iconbtn { background:none; border:none; font-size:19px; cursor:pointer; color:var(--ink-soft); padding:4px; }
+
+  .datebar { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .datebar .step { width:38px; height:38px; flex:0 0 auto; border:1px solid var(--line); background:var(--card); border-radius:12px; font-size:18px; color:var(--clay-deep); cursor:pointer; box-shadow:var(--shadow); }
+  .datebar .step:disabled { opacity:.35; cursor:default; color:var(--ink-soft); }
+  .datebar .pick { flex:1; border:1px solid var(--line); background:var(--card); border-radius:12px; padding:9px; font-size:14px; font-weight:500; color:var(--ink); cursor:pointer; box-shadow:var(--shadow); font-family:'Noto Sans TC'; }
+  .datebar .pick.past { color:var(--clay-deep); }
+
+  .cal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .cal-head button { background:none; border:1px solid var(--line); border-radius:10px; width:34px; height:34px; font-size:16px; color:var(--clay-deep); cursor:pointer; }
+  .cal-head .mlabel { font-family:'Noto Serif TC',serif; font-size:16px; font-weight:600; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:14px; }
+  .cal-grid .wd { text-align:center; font-size:11px; color:var(--ink-soft); padding:4px 0; }
+  .cal-cell { aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:10px; font-size:14px; cursor:pointer; position:relative; color:var(--ink); }
+  .cal-cell.empty { cursor:default; }
+  .cal-cell.has { background:rgba(194,114,78,.10); font-weight:600; }
+  .cal-cell.today { box-shadow:inset 0 0 0 1.5px var(--sage); }
+  .cal-cell.sel { background:var(--clay); color:#fff; }
+  .cal-cell.future { opacity:.3; cursor:default; }
+  .cal-cell .dot { width:5px; height:5px; border-radius:50%; background:var(--clay); position:absolute; bottom:5px; }
+  .cal-cell.sel .dot { background:#fff; }
 
   .hero { background:var(--card); border-radius:22px; padding:24px 20px 20px; box-shadow:var(--shadow); text-align:center; margin-bottom:14px; border:1px solid var(--line); }
   .ring-wrap { position:relative; width:170px; height:170px; margin:0 auto 6px; }
@@ -130,10 +152,19 @@
 
   <div class="hdr">
     <div>
-      <h1>今日飲食</h1>
+      <h1 id="dayTitle">今日飲食</h1>
       <div class="date" id="dateLbl"></div>
     </div>
-    <button class="gear" id="gearBtn">⚙︎</button>
+    <div class="hdr-btns">
+      <button class="iconbtn" id="calBtn">📅</button>
+      <button class="gear" id="gearBtn">⚙︎</button>
+    </div>
+  </div>
+
+  <div class="datebar">
+    <button class="step" id="prevDay">‹</button>
+    <button class="pick" id="datePick">今天</button>
+    <button class="step" id="nextDay">›</button>
   </div>
 
   <div class="banner" id="keyBanner">
@@ -256,6 +287,22 @@
   </div>
 </div>
 
+<!-- Calendar modal -->
+<div class="modal-bg" id="calModal">
+  <div class="modal">
+    <h3>翻查日期</h3>
+    <div class="cal-head">
+      <button id="calPrev">‹</button>
+      <div class="mlabel" id="calMonthLbl"></div>
+      <button id="calNext">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="hint-sm" style="margin-top:-6px;text-align:center">標橘點的是有紀錄的日子</div>
+    <button class="addbtn" id="calToday">回到今天</button>
+    <button class="mclose" id="calClose">關閉</button>
+  </div>
+</div>
+
 <div class="ovl" id="aiOvl">
   <div class="box">
     <div class="spin"></div>
@@ -267,7 +314,12 @@
 <script>
 (function(){
   const $ = id => document.getElementById(id);
-  const todayKey = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+  const WD = ['週日','週一','週二','週三','週四','週五','週六'];
+  const keyOf = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const todayKey = () => keyOf(new Date());
+  let viewDate = new Date();           // currently viewed day
+  const curKey = () => keyOf(viewDate);
+  const isToday = () => curKey() === todayKey();
 
   const DEFAULTS = { cal:1450, p:120, c:130, f:50, water:2300, goal:55, start:73.8 };
   const PRESETS = [
@@ -287,13 +339,21 @@
 
   let targets = {...DEFAULTS, ...LS.get('kk:targets',{})};
   let cfg = LS.get('kk:cfg',{key:'',model:'claude-sonnet-4-6'});
-  let log = LS.get('kk:log:'+todayKey(),[]);
-  let water = LS.get('kk:water:'+todayKey(),0);
+  let log = LS.get('kk:log:'+curKey(),[]);
+  let water = LS.get('kk:water:'+curKey(),0);
   let weights = LS.get('kk:weights',[]);
 
   function esc(s){ return String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 
   function render(){
+    // date header
+    const tdy=isToday();
+    $('dayTitle').textContent = tdy ? '今日飲食' : '當日飲食';
+    $('dateLbl').textContent = `${viewDate.getMonth()+1}月${viewDate.getDate()}日 ・ ${WD[viewDate.getDay()]}`;
+    $('datePick').textContent = tdy ? '今天' : `${viewDate.getMonth()+1}/${viewDate.getDate()} ${WD[viewDate.getDay()]}`;
+    $('datePick').classList.toggle('past', !tdy);
+    $('nextDay').disabled = tdy;   // can't go past today
+
     const sum = log.reduce((a,x)=>({cal:a.cal+x.cal,p:a.p+x.p,c:a.c+x.c,f:a.f+x.f}),{cal:0,p:0,c:0,f:0});
     const remain = Math.round(targets.cal - sum.cal);
     $('calRemain').textContent=remain; $('calRemain').style.color=remain<0?'var(--clay-deep)':'var(--ink)';
@@ -306,7 +366,7 @@
     const ll=$('logList');
     if(!log.length){ ll.innerHTML='<div class="empty">還沒有紀錄，按「拍照記錄」或下面的快速新增開始吧</div>'; }
     else { ll.innerHTML=log.map((x,i)=>`<div class="log-item"><div><div class="li-name">${esc(x.n)}</div><div class="li-meta">P ${x.p} · C ${x.c} · F ${x.f} g</div></div><div style="display:flex;align-items:center"><div class="li-cal num">${Math.round(x.cal)}</div><button class="li-del" data-i="${i}">×</button></div></div>`).join('');
-      ll.querySelectorAll('.li-del').forEach(b=>b.onclick=()=>{ log.splice(+b.dataset.i,1); LS.set('kk:log:'+todayKey(),log); render(); }); }
+      ll.querySelectorAll('.li-del').forEach(b=>b.onclick=()=>{ log.splice(+b.dataset.i,1); LS.set('kk:log:'+curKey(),log); render(); }); }
 
     const last=weights.length?weights[weights.length-1].kg:targets.start;
     $('wtNow').innerHTML=last+'<span> kg</span>'; $('wtGoal').textContent=targets.goal;
@@ -320,12 +380,56 @@
   }
 
   function buildTip(sum,remain){
+    if(!isToday()){
+      const eaten=Math.round(sum.cal);
+      if(!log.length) return '📅 這一天沒有飲食紀錄。';
+      return `📅 這天共吃了 <b>${eaten} kcal</b>，蛋白質 ${Math.round(sum.p)}g。（翻查歷史中，點「今天」回到當日）`;
+    }
     const pLeft=Math.round(targets.p-sum.p);
     if(!log.length) return '💡 <b>今天的重點：先顧蛋白質。</b>目標 '+targets.p+'g，分散三餐＋點心最好吸收。';
     if(pLeft>20) return `💪 蛋白質還差 <b>${pLeft}g</b>，下一餐補雞胸或高蛋白粉就接近達標。增肌期蛋白質吃滿比赤字更關鍵。`;
     if(remain<-100) return `⚠️ 今天熱量超出 <b>${-remain} kcal</b>。偶爾一天沒關係，明天回到節奏，別報復性節食。`;
     if(remain<200) return '✅ 今天的量抓得剛好。記得搭配重訓，抱小孩靠的是肌力，不是體重數字。';
     return `👍 進度漂亮。還剩 <b>${remain} kcal</b> 空間，留給晚餐或睡前一杯豆漿。`;
+  }
+
+  // ---- date navigation ----
+  function gotoDate(d){
+    const t=new Date(); t.setHours(0,0,0,0);
+    const nd=new Date(d); nd.setHours(0,0,0,0);
+    if(nd>t) return;                       // no future
+    viewDate=nd;
+    log=LS.get('kk:log:'+curKey(),[]);
+    water=LS.get('kk:water:'+curKey(),0);
+    render();
+  }
+  function stepDay(n){ const d=new Date(viewDate); d.setDate(d.getDate()+n); gotoDate(d); }
+
+  let calMonth=new Date();
+  function openCal(){ calMonth=new Date(viewDate.getFullYear(),viewDate.getMonth(),1); renderCal(); $('calModal').classList.add('show'); }
+  function renderCal(){
+    $('calMonthLbl').textContent=`${calMonth.getFullYear()}年 ${calMonth.getMonth()+1}月`;
+    const first=new Date(calMonth.getFullYear(),calMonth.getMonth(),1);
+    const days=new Date(calMonth.getFullYear(),calMonth.getMonth()+1,0).getDate();
+    const lead=first.getDay();
+    const tdyK=todayKey(), selK=curKey();
+    const today=new Date(); today.setHours(0,0,0,0);
+    let html=WD.map(w=>`<div class="wd">${w}</div>`).join('');
+    for(let i=0;i<lead;i++) html+=`<div class="cal-cell empty"></div>`;
+    for(let day=1;day<=days;day++){
+      const d=new Date(calMonth.getFullYear(),calMonth.getMonth(),day);
+      const k=keyOf(d);
+      const has=(LS.get('kk:log:'+k,[])||[]).length>0;
+      const future=d>today;
+      const cls=['cal-cell']; if(future) cls.push('future'); else if(has) cls.push('has');
+      if(k===tdyK) cls.push('today'); if(k===selK) cls.push('sel');
+      html+=`<div class="${cls.join(' ')}" ${future?'':`data-k="${k}"`}>${day}${has&&!future?'<span class="dot"></span>':''}</div>`;
+    }
+    $('calGrid').innerHTML=html;
+    $('calGrid').querySelectorAll('.cal-cell[data-k]').forEach(c=>c.onclick=()=>{
+      const [y,m,dd]=c.dataset.k.split('-').map(Number);
+      gotoDate(new Date(y,m-1,dd)); $('calModal').classList.remove('show');
+    });
   }
 
   function drawSpark(){
@@ -338,7 +442,7 @@
     svg.innerHTML=`<path d="${d} L${x(pts.length-1).toFixed(1)},${H} L${pad},${H} Z" fill="rgba(194,114,78,.10)"/><line x1="0" y1="${gy}" x2="300" y2="${gy}" stroke="var(--sage)" stroke-width="1" stroke-dasharray="3 3" opacity=".6"/><path d="${d}" fill="none" stroke="var(--clay)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${x(pts.length-1).toFixed(1)}" cy="${y(vals[vals.length-1]).toFixed(1)}" r="3.5" fill="var(--clay-deep)"/>`;
   }
 
-  function addFood(f){ log.push({n:f.n||f.name,cal:+f.cal||0,p:+f.p||0,c:+f.c||0,f:+f.f||0}); LS.set('kk:log:'+todayKey(),log); render(); }
+  function addFood(f){ log.push({n:f.n||f.name,cal:+f.cal||0,p:+f.p||0,c:+f.c||0,f:+f.f||0}); LS.set('kk:log:'+curKey(),log); render(); }
 
   // ---- photo → AI ----
   function fileToJpegB64(file,maxDim=1024,q=0.82){
@@ -400,6 +504,16 @@
   }
 
   function bind(){
+    $('prevDay').onclick=()=>stepDay(-1);
+    $('nextDay').onclick=()=>stepDay(1);
+    $('datePick').onclick=openCal;
+    $('calBtn').onclick=openCal;
+    $('calPrev').onclick=()=>{ calMonth=new Date(calMonth.getFullYear(),calMonth.getMonth()-1,1); renderCal(); };
+    $('calNext').onclick=()=>{ calMonth=new Date(calMonth.getFullYear(),calMonth.getMonth()+1,1); renderCal(); };
+    $('calToday').onclick=()=>{ gotoDate(new Date()); $('calModal').classList.remove('show'); };
+    $('calClose').onclick=()=>$('calModal').classList.remove('show');
+    $('calModal').onclick=e=>{ if(e.target===$('calModal')) $('calModal').classList.remove('show'); };
+
     const noKey=()=>{ openModal({},false); ['fName','fCal','fP','fC','fF'].forEach(id=>$(id).value=''); };
     const handlePhoto=async e=>{
       const file=e.target.files&&e.target.files[0]; if(!file) return;
@@ -412,9 +526,9 @@
     $('albumBtn').onclick=()=>{ if(!cfg.key){ noKey(); return; } $('albumInput').click(); };
     $('photoInput').onchange=handlePhoto;
     $('albumInput').onchange=handlePhoto;
-    $('water250').onclick=()=>{ water+=250; LS.set('kk:water:'+todayKey(),water); render(); };
-    $('water500').onclick=()=>{ water+=500; LS.set('kk:water:'+todayKey(),water); render(); };
-    $('waterMinus').onclick=()=>{ water=Math.max(0,water-250); LS.set('kk:water:'+todayKey(),water); render(); };
+    $('water250').onclick=()=>{ water+=250; LS.set('kk:water:'+curKey(),water); render(); };
+    $('water500').onclick=()=>{ water+=500; LS.set('kk:water:'+curKey(),water); render(); };
+    $('waterMinus').onclick=()=>{ water=Math.max(0,water-250); LS.set('kk:water:'+curKey(),water); render(); };
     $('openAdd').onclick=()=>{ openModal({},false); ['fName','fCal','fP','fC','fF'].forEach(id=>$(id).value=''); };
     $('aiCalcBtn').onclick=async()=>{
       if(!cfg.key){ alert('要先到 ⚙︎ 設定填入 AI 金鑰，才能自動換算。'); return; }
@@ -478,7 +592,7 @@
         if(data.targets){ targets={...DEFAULTS,...data.targets}; LS.set('kk:targets',targets); }
         if(data.weights){ weights=data.weights; LS.set('kk:weights',weights); }
         if(data.days){ Object.keys(data.days).forEach(k=>{ if(data.days[k]!=null) LS.set(k,data.days[k]); }); }
-        log=LS.get('kk:log:'+todayKey(),[]); water=LS.get('kk:water:'+todayKey(),0);
+        log=LS.get('kk:log:'+curKey(),[]); water=LS.get('kk:water:'+curKey(),0);
         if(data.cfg&&data.cfg.model) { cfg.model=data.cfg.model; LS.set('kk:cfg',cfg); }
         $('backupStatus').textContent='✅ 還原完成！';
         render();
@@ -488,8 +602,6 @@
     reader.readAsText(file);
   }
 
-  const d=new Date();
-  $('dateLbl').textContent=`${d.getMonth()+1}月${d.getDate()}日 ・ ${['週日','週一','週二','週三','週四','週五','週六'][d.getDay()]}`;
   renderPresets(); bind(); render();
 })();
 </script>
