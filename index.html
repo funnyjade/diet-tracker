@@ -167,6 +167,8 @@
     <button class="step" id="nextDay">›</button>
   </div>
 
+  <div id="goalCard" style="display:none; background:rgba(126,144,112,.12); border:1px solid rgba(126,144,112,.3); border-radius:14px; padding:11px 14px; margin-bottom:12px; font-size:13px; color:#5d6e52;">🎯 <b id="goalText"></b><span id="mealHint" style="display:block; color:var(--ink-soft); font-size:12px; margin-top:4px;"></span></div>
+
   <div class="banner" id="keyBanner">
     👋 第一次使用？填入一把 AI 金鑰，就能開啟「拍照自動辨識」。沒填也能用手動輸入。
     <br><button id="bannerSetup">前往設定金鑰</button>
@@ -211,7 +213,8 @@
   <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
   <input type="file" id="albumInput" accept="image/*" style="display:none">
   <div class="presets" id="presets"></div>
-  <button class="secondary" id="openAdd">＋ 手動輸入食物</button>
+  <button class="secondary" id="openAdd" style="margin-bottom:10px">＋ 手動輸入食物</button>
+  <button class="photobtn" id="menuBtn" style="background:linear-gradient(135deg,var(--sage),#5d6e52)"><span class="cam">🍽️</span> AI 推薦今日菜單</button>
 
   <div class="sec-title">體重追蹤</div>
   <div class="wt-card">
@@ -228,6 +231,7 @@
     </div>
   </div>
 
+  <div class="sec-title">攝取提醒</div>
   <div class="tip" id="tipBox">載入中…</div>
 </div>
 
@@ -261,6 +265,9 @@
         <option value="claude-haiku-4-5-20251001">Haiku（最省，速度快）</option>
       </select>
     </div>
+    <div class="sec-title" style="margin-left:0">生活目標</div>
+    <div class="field"><label>你想達成的目標（會顯示在首頁，也讓 AI 推薦更貼你）</label><input id="sLifeGoal" placeholder="例：抱得動兩個小孩上下樓還能小跑"></div>
+
     <div class="sec-title" style="margin-left:0">每日目標</div>
     <div class="row3">
       <div class="field"><label>熱量</label><input id="sCal" type="number" inputmode="numeric"></div>
@@ -284,6 +291,15 @@
     <div class="hint-sm" id="backupStatus" style="margin-top:8px; text-align:center"></div>
 
     <button class="mclose" id="closeSet">關閉</button>
+  </div>
+</div>
+
+<!-- Recommend menu modal -->
+<div class="modal-bg" id="menuModal">
+  <div class="modal">
+    <h3>🍽️ AI 推薦今日菜單</h3>
+    <div id="menuBody" style="font-size:13.5px; line-height:1.7; color:var(--ink);"></div>
+    <button class="mclose" id="menuClose">關閉</button>
   </div>
 </div>
 
@@ -338,7 +354,8 @@
   };
 
   let targets = {...DEFAULTS, ...LS.get('kk:targets',{})};
-  let cfg = LS.get('kk:cfg',{key:'',model:'claude-sonnet-4-6'});
+  let cfg = LS.get('kk:cfg',{});
+  cfg = Object.assign({key:'',model:'claude-sonnet-4-6',lifeGoal:''}, cfg);
   let log = LS.get('kk:log:'+curKey(),[]);
   let water = LS.get('kk:water:'+curKey(),0);
   let weights = LS.get('kk:weights',[]);
@@ -377,20 +394,48 @@
     $('tipBox').innerHTML=buildTip(sum,remain);
     $('keyBanner').style.display = cfg.key ? 'none' : 'block';
     $('photoHint').textContent = cfg.key ? '拍下餐點，AI 幫你估熱量與營養素，確認後計入' : '尚未設定 AI 金鑰，目前拍照會改用手動填寫（可到 ⚙︎ 設定開啟辨識）';
+
+    // life goal + intake guidance
+    if(cfg.lifeGoal && cfg.lifeGoal.trim()){
+      $('goalText').textContent=cfg.lifeGoal.trim();
+      $('mealHint').textContent = tdy ? intakeWatch(sum,remain) : '';
+      $('goalCard').style.display='block';
+    } else { $('goalCard').style.display='none'; }
+  }
+
+  // short one-line "what to watch next" for the goal card
+  function intakeWatch(sum,remain){
+    const pLeft=Math.round(targets.p-sum.p), cOver=sum.c-targets.c, fOver=sum.f-targets.f;
+    if(!log.length) return '👀 今天還沒記錄，先從一份蛋白質開始。';
+    if(remain<-50) return `⚠️ 已超出 ${-Math.round(remain)} kcal，接下來盡量只補蛋白質、少澱粉與油。`;
+    if(pLeft>25) return `👀 接下來重點：補蛋白質，還差 ${pLeft}g。`;
+    if(cOver>20) return '👀 碳水偏高了，接下來主食減半、多放青菜與蛋白質。';
+    if(fOver>12) return '👀 油脂偏高了，接下來選清蒸、水煮，避開油炸與肥肉。';
+    if(remain<250) return '👀 額度快滿，晚餐維持高蛋白、低澱粉就好。';
+    return `👀 進度穩，剩 ${Math.round(remain)} kcal、蛋白質再補 ${Math.max(pLeft,0)}g 就達標。`;
   }
 
   function buildTip(sum,remain){
     if(!isToday()){
       const eaten=Math.round(sum.cal);
       if(!log.length) return '📅 這一天沒有飲食紀錄。';
-      return `📅 這天共吃了 <b>${eaten} kcal</b>，蛋白質 ${Math.round(sum.p)}g。（翻查歷史中，點「今天」回到當日）`;
+      return `📅 這天共吃了 <b>${eaten} kcal</b>，蛋白質 ${Math.round(sum.p)}g、碳水 ${Math.round(sum.c)}g、脂肪 ${Math.round(sum.f)}g。`;
     }
+    if(!log.length) return '💡 <b>今天的攝取提醒</b><br>還沒記錄。重點順序：先卡一份蛋白質開頭，目標一天 '+targets.p+'g，分散三餐最好吸收。';
+
     const pLeft=Math.round(targets.p-sum.p);
-    if(!log.length) return '💡 <b>今天的重點：先顧蛋白質。</b>目標 '+targets.p+'g，分散三餐＋點心最好吸收。';
-    if(pLeft>20) return `💪 蛋白質還差 <b>${pLeft}g</b>，下一餐補雞胸或高蛋白粉就接近達標。增肌期蛋白質吃滿比赤字更關鍵。`;
-    if(remain<-100) return `⚠️ 今天熱量超出 <b>${-remain} kcal</b>。偶爾一天沒關係，明天回到節奏，別報復性節食。`;
-    if(remain<200) return '✅ 今天的量抓得剛好。記得搭配重訓，抱小孩靠的是肌力，不是體重數字。';
-    return `👍 進度漂亮。還剩 <b>${remain} kcal</b> 空間，留給晚餐或睡前一杯豆漿。`;
+    const cOver=Math.round(sum.c-targets.c), fOver=Math.round(sum.f-targets.f);
+    const notes=[];
+    // 1) the single most important next action
+    if(remain<-50) notes.push(`⚠️ <b>已超出 ${-Math.round(remain)} kcal。</b>接下來這餐盡量只吃蛋白質和青菜，少澱粉、少油；別靠餓下一餐補回來，那會掉肌肉。`);
+    else if(pLeft>25) notes.push(`💪 <b>接下來重點：補蛋白質，還差 ${pLeft}g。</b>一份雞胸/魚/豆腐或一匙高蛋白粉就拉得上來。增肌期蛋白質吃滿比赤字更關鍵。`);
+    else if(remain<250) notes.push(`🍽️ <b>額度快滿（剩 ${Math.round(remain)} kcal）。</b>最後一餐維持高蛋白、低澱粉，避免再加飯或含糖飲料。`);
+    else notes.push(`👍 <b>進度穩，還剩 ${Math.round(remain)} kcal。</b>${pLeft>0?'蛋白質再補 '+pLeft+'g 就達標。':'蛋白質已達標，很棒。'}`);
+    // 2) secondary watch-outs
+    if(cOver>20) notes.push(`• 碳水已超標 ${cOver}g，接下來主食減半、改放蔬菜。`);
+    if(fOver>12) notes.push(`• 油脂已超標 ${fOver}g，選清蒸/水煮，避開油炸與肥肉。`);
+    if(water<targets.water*0.5) notes.push(`• 水分才喝 ${water}ml，記得補到 ${targets.water}ml，幫助代謝與飽足。`);
+    return notes.join('<br>');
   }
 
   // ---- date navigation ----
@@ -480,6 +525,26 @@
     return callNutri('食物（含份量）：'+desc+'。請估算熱量與營養素。');
   }
 
+  async function recommendMenu(){
+    const sum=log.reduce((a,x)=>({cal:a.cal+x.cal,p:a.p+x.p,c:a.c+x.c,f:a.f+x.f}),{cal:0,p:0,c:0,f:0});
+    const rem={cal:Math.round(targets.cal-sum.cal),p:Math.round(targets.p-sum.p),c:Math.round(targets.c-sum.c),f:Math.round(targets.f-sum.f)};
+    const eaten=log.map(x=>x.n).join('、')||'尚未進食';
+    const sys='你是親切的營養師，服務對象是台灣的飲食者。根據對方今天的剩餘營養額度與目標，建議接下來該怎麼吃。用繁體中文、台灣常見食物，條列 2～3 個具體餐點建議（含大概份量與預估熱量），並用一句話總結接下來要注意的重點。語氣務實簡潔，總長度控制在 180 字內。直接給建議，不要前言。';
+    const usr=`今日目標：熱量 ${targets.cal} kcal、蛋白質 ${targets.p}g、碳水 ${targets.c}g、脂肪 ${targets.f}g。\n`+
+      `已吃：${eaten}。\n`+
+      `目前剩餘額度：熱量 ${rem.cal} kcal、蛋白質 ${rem.p}g、碳水 ${rem.c}g、脂肪 ${rem.f}g。\n`+
+      (cfg.lifeGoal?`使用者的生活目標：${cfg.lifeGoal}。\n`:'')+
+      `請建議接下來怎麼吃，優先把蛋白質補足，並避免熱量超標。`;
+    const r=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:cfg.model||'claude-sonnet-4-6',max_tokens:600,system:sys,messages:[{role:'user',content:usr}]})
+    });
+    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('API '+r.status+' '+t.slice(0,120)); }
+    const data=await r.json();
+    return (data.content||[]).map(i=>i.type==='text'?i.text:'').join('').trim();
+  }
+
   function openModal(r,isAI){
     $('addTitle').textContent=isAI?'確認辨識結果':'新增食物';
     $('fName').value=r.name||r.n||''; $('fCal').value=r.cal!==''&&r.cal!=null?Math.round(r.cal):'';
@@ -498,6 +563,7 @@
 
   function openSettings(){
     $('sKey').value=cfg.key||''; $('sModel').value=cfg.model||'claude-sonnet-4-6';
+    $('sLifeGoal').value=cfg.lifeGoal||'';
     $('sCal').value=targets.cal; $('sP').value=targets.p; $('sC').value=targets.c;
     $('sF').value=targets.f; $('sW').value=targets.water; $('sGoal').value=targets.goal;
     $('setModal').classList.add('show');
@@ -513,6 +579,20 @@
     $('calToday').onclick=()=>{ gotoDate(new Date()); $('calModal').classList.remove('show'); };
     $('calClose').onclick=()=>$('calModal').classList.remove('show');
     $('calModal').onclick=e=>{ if(e.target===$('calModal')) $('calModal').classList.remove('show'); };
+
+    $('menuClose').onclick=()=>$('menuModal').classList.remove('show');
+    $('menuModal').onclick=e=>{ if(e.target===$('menuModal')) $('menuModal').classList.remove('show'); };
+    $('menuBtn').onclick=async()=>{
+      if(!cfg.key){ alert('要先到 ⚙︎ 設定填入 AI 金鑰，才能用 AI 推薦菜單。'); return; }
+      if(!isToday()){ alert('推薦菜單只在「今天」可用，先按「今天」回到當日。'); return; }
+      $('aiOvl').classList.add('show');
+      try{
+        const txt=await recommendMenu();
+        $('menuBody').innerHTML=esc(txt).replace(/\n/g,'<br>');
+        $('menuModal').classList.add('show');
+      }catch(err){ console.warn(err); alert('推薦沒成功：'+err.message+'\n\n可稍後再試。'); }
+      finally{ $('aiOvl').classList.remove('show'); }
+    };
 
     const noKey=()=>{ openModal({},false); ['fName','fCal','fP','fC','fF'].forEach(id=>$(id).value=''); };
     const handlePhoto=async e=>{
@@ -554,7 +634,7 @@
     $('bannerSetup').onclick=openSettings;
     $('closeSet').onclick=()=>$('setModal').classList.remove('show');
     $('saveSet').onclick=()=>{
-      cfg.key=$('sKey').value.trim(); cfg.model=$('sModel').value; LS.set('kk:cfg',cfg);
+      cfg.key=$('sKey').value.trim(); cfg.model=$('sModel').value; cfg.lifeGoal=$('sLifeGoal').value.trim(); LS.set('kk:cfg',cfg);
       targets.cal=+$('sCal').value||targets.cal; targets.p=+$('sP').value||targets.p; targets.c=+$('sC').value||targets.c;
       targets.f=+$('sF').value||targets.f; targets.water=+$('sW').value||targets.water; targets.goal=+$('sGoal').value||targets.goal;
       LS.set('kk:targets',targets); $('setModal').classList.remove('show'); render();
