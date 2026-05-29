@@ -175,8 +175,10 @@
 
   <div class="sec-title">快速新增</div>
   <button class="photobtn" id="photoBtn"><span class="cam">📷</span> 拍照記錄</button>
+  <button class="secondary" id="albumBtn" style="margin-bottom:10px">🖼️ 從相簿選照片</button>
   <div class="photohint" id="photoHint">拍下餐點，AI 幫你估熱量與營養素，確認後計入</div>
   <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+  <input type="file" id="albumInput" accept="image/*" style="display:none">
   <div class="presets" id="presets"></div>
   <button class="secondary" id="openAdd">＋ 手動輸入食物</button>
 
@@ -203,7 +205,8 @@
   <div class="modal">
     <h3 id="addTitle">新增食物</h3>
     <div class="ainote" id="aiNote"></div>
-    <div class="field"><label>名稱</label><input id="fName" placeholder="例：滷雞腿便當"></div>
+    <div class="field"><label>名稱（含份量）</label><input id="fName" placeholder="例：滷雞腿便當 1個 / 雞胸肉 150g"></div>
+    <button class="secondary" id="aiCalcBtn" style="margin-bottom:13px">🤖 AI 幫我換算熱量</button>
     <div class="field"><label>熱量 (kcal)</label><input id="fCal" type="number" inputmode="numeric" placeholder="0"></div>
     <div class="row3">
       <div class="field"><label>蛋白 g</label><input id="fP" type="number" inputmode="decimal" placeholder="0"></div>
@@ -349,20 +352,28 @@
     });
   }
 
-  async function analyzePhoto(file){
-    const b64=await fileToJpegB64(file);
-    const sys='你是專業營養估算助理。看食物照片估算整份餐點的熱量與三大營養素。只回傳一個 JSON 物件，不要 markdown、不要任何說明文字。格式：{"name":繁體中文簡短餐點名稱,"cal":整數熱量kcal,"p":蛋白質克數,"c":碳水克數,"f":脂肪克數,"note":繁體中文一句話估算說明或提醒}。份量不明確就用一般單人份估算並在 note 說明。若照片不是食物，cal 設 0 並在 note 說明。';
+  const NUTRI_SYS='你是專業營養估算助理。根據提供的食物照片或文字描述（含份量），估算整份餐點的熱量與三大營養素。只回傳一個 JSON 物件，不要 markdown、不要任何說明文字。格式：{"name":繁體中文簡短餐點名稱,"cal":整數熱量kcal,"p":蛋白質克數,"c":碳水克數,"f":脂肪克數,"note":繁體中文一句話估算說明或提醒}。份量不明確就用一般單人份估算並在 note 說明。若提供的是照片且非食物，cal 設 0 並在 note 說明。';
+
+  async function callNutri(content){
     const r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:cfg.model||'claude-sonnet-4-6',max_tokens:1000,system:sys,
-        messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}},{type:'text',text:'請估算這份餐點的熱量與營養素。'}]}]})
+      body:JSON.stringify({model:cfg.model||'claude-sonnet-4-6',max_tokens:1000,system:NUTRI_SYS,messages:[{role:'user',content}]})
     });
     if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error('API '+r.status+' '+t.slice(0,120)); }
     const data=await r.json();
     let txt=(data.content||[]).map(i=>i.type==='text'?i.text:'').join('').trim().replace(/```json/g,'').replace(/```/g,'').trim();
     const m=txt.match(/\{[\s\S]*\}/); if(m) txt=m[0];
     return JSON.parse(txt);
+  }
+
+  async function analyzePhoto(file){
+    const b64=await fileToJpegB64(file);
+    return callNutri([{type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}},{type:'text',text:'請估算這份餐點的熱量與營養素。'}]);
+  }
+
+  async function analyzeText(desc){
+    return callNutri('食物（含份量）：'+desc+'。請估算熱量與營養素。');
   }
 
   function openModal(r,isAI){
@@ -389,18 +400,37 @@
   }
 
   function bind(){
-    $('photoBtn').onclick=()=>{ if(!cfg.key){ openModal({},false); ['fName','fCal','fP','fC','fF'].forEach(id=>$(id).value=''); return; } $('photoInput').click(); };
-    $('photoInput').onchange=async e=>{
+    const noKey=()=>{ openModal({},false); ['fName','fCal','fP','fC','fF'].forEach(id=>$(id).value=''); };
+    const handlePhoto=async e=>{
       const file=e.target.files&&e.target.files[0]; if(!file) return;
       $('aiOvl').classList.add('show');
       try{ openModal(await analyzePhoto(file),true); }
-      catch(err){ console.warn(err); alert('辨識沒成功：'+err.message+'\n\n可再拍一次，或用手動輸入。'); }
+      catch(err){ console.warn(err); alert('辨識沒成功：'+err.message+'\n\n可再試一次，或用手動輸入。'); }
       finally{ $('aiOvl').classList.remove('show'); e.target.value=''; }
     };
+    $('photoBtn').onclick=()=>{ if(!cfg.key){ noKey(); return; } $('photoInput').click(); };
+    $('albumBtn').onclick=()=>{ if(!cfg.key){ noKey(); return; } $('albumInput').click(); };
+    $('photoInput').onchange=handlePhoto;
+    $('albumInput').onchange=handlePhoto;
     $('water250').onclick=()=>{ water+=250; LS.set('kk:water:'+todayKey(),water); render(); };
     $('water500').onclick=()=>{ water+=500; LS.set('kk:water:'+todayKey(),water); render(); };
     $('waterMinus').onclick=()=>{ water=Math.max(0,water-250); LS.set('kk:water:'+todayKey(),water); render(); };
     $('openAdd').onclick=()=>{ openModal({},false); ['fName','fCal','fP','fC','fF'].forEach(id=>$(id).value=''); };
+    $('aiCalcBtn').onclick=async()=>{
+      if(!cfg.key){ alert('要先到 ⚙︎ 設定填入 AI 金鑰，才能自動換算。'); return; }
+      const desc=$('fName').value.trim(); if(!desc){ $('fName').focus(); return; }
+      $('aiOvl').classList.add('show');
+      try{
+        const r=await analyzeText(desc);
+        $('fName').value=r.name||desc;
+        $('fCal').value=r.cal!=null?Math.round(r.cal):'';
+        $('fP').value=r.p??''; $('fC').value=r.c??''; $('fF').value=r.f??'';
+        const note=$('aiNote');
+        note.innerHTML='<span class="aibadge">AI 換算</span><br>'+esc(r.note||'已估算，數字可修改後再加入。');
+        note.style.display='block';
+      }catch(err){ console.warn(err); alert('換算沒成功：'+err.message+'\n\n可再試一次，或自己填數字。'); }
+      finally{ $('aiOvl').classList.remove('show'); }
+    };
     $('closeAdd').onclick=()=>$('addModal').classList.remove('show');
     $('saveFood').onclick=()=>{ const n=$('fName').value.trim(); if(!n){ $('fName').focus(); return; }
       addFood({n,cal:$('fCal').value,p:$('fP').value,c:$('fC').value,f:$('fF').value});
